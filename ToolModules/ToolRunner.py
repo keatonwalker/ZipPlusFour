@@ -15,5 +15,8 @@ else:
     inputTable = arcpy.GetParameterAsText(1)
     outputDirectory = arcpy.GetParameterAsText(2)
     
+    
+version = "1.0.1"
+arcpy.AddMessage("Version " + version)
 testTool = ZipPlusFourTool.ZipPlusFourTool(apiKey, inputTable, outputDirectory)
 testTool.start()

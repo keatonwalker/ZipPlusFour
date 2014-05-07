@@ -3,10 +3,9 @@ Created on Mar 21, 2014
 
 @author: kwalker
 '''
-import arcpy, os, csv, imp, fields, configs
+import arcpy, os, csv, imp, fields, configs, ScriptRunTime
 from time import strftime
 from operator import attrgetter
-from matplotlib.pyparsing import NoMatch
 
 class PlusFourArea(object):
     
@@ -119,67 +118,77 @@ class ZipPlusFourTool(object):
                 xCoord,
                 yCoord]
         
-        return outRow    
+        return outRow
+    
+    def _createOuputFeatures(self):
+        """Creates output features.
+           Output features are created at the begining of the tool run incase they cause a database lock error."""
+        outFields = fields.Output()
+        outConfig = configs.Output()       
+        #Create output results tables and features.
+        #Unmatched address table
+        arcpy.CreateTable_management(self._outputGdb, outConfig.addrProblemTable)
+        addrProblemTable = os.path.join(self._outputGdb, outConfig.addrProblemTable)
+        #Zero match zip4 table
+        arcpy.CreateTable_management(self._outputGdb, outConfig.noMatchTable)
+        noMatchTable = os.path.join(self._outputGdb, outConfig.noMatchTable)
+        #One match zip4 point feature
+        arcpy.CreateFeatureclass_management(self._outputGdb, outConfig.pointFeature, "POINT", spatial_reference = outConfig.spatialRefernce)
+        pointFeature = os.path.join(self._outputGdb, outConfig.pointFeature)
+        #GT one match zip4 line feature
+        arcpy.CreateFeatureclass_management(self._outputGdb, outConfig.lineFeature, "POLYLINE", spatial_reference = outConfig.spatialRefernce)
+        lineFeature = os.path.join(self._outputGdb, outConfig.lineFeature)
+        
+        outFields.addFieldsToFeature(addrProblemTable)
+        outFields.addFieldsToFeature(noMatchTable)
+        outFields.addFieldsToFeature(pointFeature)
+        outFields.addFieldsToFeature(lineFeature)    
     
     def _createResultsFromPlus4Areas(self, zipPlus4Areas):
         outFields = fields.Output()
         outConfig = configs.Output()
         
-        #Create output results tables and features.
-        #Unmatched address table
-        arcpy.CreateTable_management(self._outputGdb, outConfig.addrProblemTable)
-        addrProblemTable = os.path.join(self._outputGdb, outConfig.addrProblemTable)
-        outFields.addFieldsToFeature(addrProblemTable)
-        #Zero match zip4 table
-        arcpy.CreateTable_management(self._outputGdb, outConfig.noMatchTable)
-        noMatchTable = os.path.join(self._outputGdb, outConfig.noMatchTable)
-        outFields.addFieldsToFeature(noMatchTable)
-        #One match zip4 point feature
-        arcpy.CreateFeatureclass_management(self._outputGdb, outConfig.pointFeature, "POINT", spatial_reference = outConfig.spatialRefernce)
-        pointFeature = os.path.join(self._outputGdb, outConfig.pointFeature)
-        outFields.addFieldsToFeature(pointFeature)
-        #GT one match zip4 line feature
-        arcpy.CreateFeatureclass_management(self._outputGdb, outConfig.lineFeature, "POLYLINE", spatial_reference = outConfig.spatialRefernce)
-        lineFeature = os.path.join(self._outputGdb, outConfig.lineFeature)
-        outFields.addFieldsToFeature(lineFeature)
+        noMatchList = []
+        pointList = []
+        lineList = []
         
+        #Unmatched address table
+        addrProblemTable = os.path.join(self._outputGdb, outConfig.addrProblemTable)
+        #Zero match zip4 table
+        noMatchTable = os.path.join(self._outputGdb, outConfig.noMatchTable)
+        #One match zip4 point feature
+        pointFeature = os.path.join(self._outputGdb, outConfig.pointFeature)
+        #GT one match zip4 line feature
+        lineFeature = os.path.join(self._outputGdb, outConfig.lineFeature)
+         
         for plus4Area in zipPlus4Areas:
             print plus4Area._segSectorNum
             foundAddrList = []
             for addr in plus4Area.getAddresses():
                 addrProblemCursor = arcpy.da.InsertCursor(addrProblemTable, outFields.getFields())
                 if not addr.isFound:
-                    print "\taddrProblemTable"
+                    #print "\taddrProblemTable"
                     addrProblemCursor.insertRow(self._createOuputRow(plus4Area._segSectorNum, "T", addr))
                 else:
                     foundAddrList.append(addr)
                 
                 del addrProblemCursor
-            #Handle the writing zip plus 4 info to the appropriate result.
+            #Handle the writing zip plus 4 info to the appropriate result row format.
             #Create a no matches result
             if len(foundAddrList) == 0:
-                noMatchCursor = arcpy.da.InsertCursor(noMatchTable, outFields.getFields())
-                noMatchCursor.insertRow(self._createOuputRow(plus4Area._segSectorNum, "T", plus4Area.getAddresses()[0]))
-                del noMatchCursor
-                print "noMatchTable"
+                noMatchList.append(self._createOuputRow(plus4Area._segSectorNum, "T", plus4Area.getAddresses()[0]))
+                #print "noMatchTable"
+                
             #Create a point result    
             elif len(foundAddrList) == 1:
-                f = list(outFields.getFields())
-                f.append("SHAPE@XY")                
-                pointCursor = arcpy.da.InsertCursor(pointFeature, f)
-                
                 xyPoint = (float(foundAddrList[0].geocodeResult.xCoord), float(foundAddrList[0].geocodeResult.yCoord))
                 insertRow = self._createOuputRow(plus4Area._segSectorNum, "T", foundAddrList[0])
-                insertRow.append(xyPoint)
-                pointCursor.insertRow(insertRow)             
-                del pointCursor
-                print "pointFeature"
-            #Create a line result    
-            elif len(foundAddrList) > 1:
-                f = list(outFields.getFields())
-                f.append("SHAPE@")                
-                lineCursor = arcpy.da.InsertCursor(lineFeature, f)
+                insertRow.append(xyPoint)                
+                pointList.append(insertRow)
+                #print "pointFeature"
                 
+            #Create a line result    
+            elif len(foundAddrList) > 1:                
                 array = arcpy.Array()
                 for addr in foundAddrList:
                     array.append(arcpy.Point(float(addr.geocodeResult.xCoord), float(addr.geocodeResult.yCoord)))
@@ -188,10 +197,30 @@ class ZipPlusFourTool(object):
                 for addr in foundAddrList:
                     insertRow = self._createOuputRow(plus4Area._segSectorNum, "T", addr)#foundAddrList[0])
                     insertRow.append(line)
-                    lineCursor.insertRow(insertRow)
-                del lineCursor
-                print "lineFeature"
+                    lineList.append(insertRow)
+                    
+                #print "lineFeature"
         
+        #Insert rows into zip+4 result table and features
+        noMatchCursor = arcpy.da.InsertCursor(noMatchTable, outFields.getFields())
+        for noM in noMatchList:
+            noMatchCursor.insertRow(noM)
+        del noMatchCursor
+
+        f = list(outFields.getFields())
+        f.append("SHAPE@XY")                
+        pointCursor = arcpy.da.InsertCursor(pointFeature, f)
+        for p in pointList:
+            pointCursor.insertRow(p)                     
+        del pointCursor
+        
+        f = list(outFields.getFields())
+        f.append("SHAPE@")                
+        lineCursor = arcpy.da.InsertCursor(lineFeature, f)
+        for l in lineList:
+            lineCursor.insertRow(l)        
+        del lineCursor                   
+         
         print
                     
     
@@ -300,45 +329,43 @@ class ZipPlusFourTool(object):
         allZipPlusFours = []
         geocodeResults = {}
         addressCsv = os.path.join(self._tempDirectory, "AddressesForGeocode.csv")
+        self._createOuputFeatures()
         
-        inputFields = fields.Input()
-        fieldList = inputFields.getFields()
-#         ["Addr_PrimaryLowNo", "AddrPrimaryHighNo", "StreetPreDrctnAbbrev",
-#                      "StreetName", "StreetSuffixAbbrev", "StreetPostDrctnAbbrev",
-#                      "ZipCode", "LowZipSegmentrNo", "HighZipSegmentNo", 
-#                      "LowZipSectorNo", "HighZipSectorNo", "OID@"]
-#         
+        inFields = fields.Input()
+        fieldList = inFields.getFields()       
         whereClause = "RecordTypeCode = 'S' or RecordTypeCode = 'H' and not( AddrPrimaryHighNo is null or StreetName is null)"
         with arcpy.da.SearchCursor(self._zipTable, fieldList, whereClause) as cursor:
             for row in cursor:
-                streetName = self._buildStreetName(row[2], row[3], row[4], row[5])
+                streetName = self._buildStreetName(row[inFields.getI(inFields.preDirection)], row[inFields.getI(inFields.streetName)],
+                                                   row[inFields.getI(inFields.streetSuffix)], row[inFields.getI(inFields.postDirection)]) #row[2], row[3], row[4], row[5])
                 
-                zone = str(row[6])
+                zone = str(row[inFields.getI(inFields.zipCode)])
                 if zone[:1] == "8":
                     zone = zone.strip()[:5]
 
                 tempPlusFourList = []
-                zipPlusFourNumbers = self._getZipPlusForNumbers(row[7], row[8], row[9], row[10])
+                zipPlusFourNumbers = self._getZipPlusForNumbers(row[inFields.getI(inFields.zip4SegLow)], row[inFields.getI(inFields.zip4SegHigh)],
+                                                                row[inFields.getI(inFields.zip4SectorLow)], row[inFields.getI(inFields.zip4SectorHigh)]) #row[7], row[8], row[9], row[10])
                 for plus4Num in zipPlusFourNumbers:
                     plus4Area = PlusFourArea(plus4Num)
                     tempPlusFourList.append(plus4Area)
 
-                houseNumList = self._getHouseNumbers(row[0], row[1])
+                houseNumList = self._getHouseNumbers(row[inFields.getI(inFields.lowHouseNum)], row[inFields.getI(inFields.highHouseNum)])#row[0], row[1])
                 #Check how many house numbers  _getHouseNumbers returned
                 #If one address returned it is the low address
-                lowAddr = Address(streetName, houseNumList[0], zone, 0, row[11])
+                lowAddr = Address(streetName, houseNumList[0], zone, 0, row[inFields.getI(inFields.objectId)])#row[11])
                 allAddresses.append(lowAddr)
                 for plus4Area in tempPlusFourList:
                     plus4Area.addAddress(lowAddr)
  
                 if len(houseNumList) > 1:
-                    highAddr = Address(streetName, houseNumList[1], zone, 2, row[11])
+                    highAddr = Address(streetName, houseNumList[1], zone, 2, row[inFields.getI(inFields.objectId)])
                     allAddresses.append(highAddr)
                     for plus4Area in tempPlusFourList:
                         plus4Area.addAddress(highAddr)                    
                         
                 if len(houseNumList) > 2:
-                    midAddr = Address(streetName, houseNumList[2], zone, 1, row[11])
+                    midAddr = Address(streetName, houseNumList[2], zone, 1, row[inFields.getI(inFields.objectId)])
                     allAddresses.append(midAddr)
                     for plus4Area in tempPlusFourList:
                         plus4Area.addAddress(midAddr)                    
@@ -369,7 +396,10 @@ class ZipPlusFourTool(object):
                 else:
                     addr.setGeocodeResult(geocodeResults[addr.id], True)
                     
+        arcpy.AddMessage("Creating result tables")
+        timer = ScriptRunTime.ScriptRunTime()
         self._createResultsFromPlus4Areas(allZipPlusFours)
+        arcpy.AddMessage(timer.elapsedTime("sec"))
                     
          
                 
