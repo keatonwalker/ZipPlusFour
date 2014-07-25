@@ -52,11 +52,25 @@ class Output(Fields):
         self.score = "Score"
         self.xCoord = "X"
         self.yCoord = "Y"
+        #Line specific fields
+        
     
         self._fieldList = (self.zipPlus4, self.type, self.match, 
                      self.originRowID, self.inputAddress, self.inputZone, 
                      self.matchAddress, self.matchZone, self.geocoder, 
                      self.score, self.xCoord, self.yCoord)
+    
+    def getLineFields(self):
+        lineFields = []
+        for i in range(3):
+            fieldNum = ""
+            if i != 0:
+                fieldNum = str(i)        
+            
+            for f in self._fieldList:
+                lineFields.append(f + fieldNum)
+        
+        return lineFields
         
     def addFieldsToFeature(self, feature):
         import arcpy
@@ -80,3 +94,31 @@ class Output(Fields):
                 
             arcpy.AddField_management(in_table = feature, field_name = params[0], 
                                       field_type = params[1], field_length = textFieldLength)
+            
+    def addFieldsToLineFeature(self, feature):
+        import arcpy
+        addFieldParams = [[self.zipPlus4, "TEXT", 9],
+                        [self.type, "TEXT", 10],
+                        [self.match, "TEXT", 15],
+                        [self.originRowID, "LONG"],
+                        [self.inputAddress, "TEXT", 75],
+                        [self.inputZone, "TEXT", 50],
+                        [self.matchAddress, "TEXT", 75],
+                        [self.matchZone, "TEXT", 50],
+                        [self.geocoder, "TEXT", 50],
+                        [self.score, "DOUBLE"],
+                        [self.xCoord, "DOUBLE"],
+                        [self.yCoord, "DOUBLE"]]
+        
+        for i in range(3):
+            fieldNum = ""
+            if i != 0:
+                fieldNum = str(i)
+
+            for params in addFieldParams:
+                textFieldLength = ""
+                if len(params) > 2:
+                    textFieldLength = params[2]
+                    
+                arcpy.AddField_management(in_table = feature, field_name = params[0] + fieldNum, 
+                                          field_type = params[1], field_length = textFieldLength)

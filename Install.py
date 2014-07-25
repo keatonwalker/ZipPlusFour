@@ -11,7 +11,7 @@ currentTime = time.time()
 
 srcDir = os.path.dirname(__file__)
 dstDir = get_python_lib()
-scriptFiles = ["configs.py", "fields.py", "ZipPlusFourTool.py"]
+scriptFiles = ["configs.py", "fields.py", "ZipPlusFourTool.py", "GeocodeAddressTable.py"]
 for f in scriptFiles:
     shutil.copy(os.path.join(srcDir, f), os.path.join(dstDir, f))
 

@@ -120,6 +120,42 @@ class ZipPlusFourTool(object):
         
         return outRow
     
+    def _createOuputLineRow(self, zip4Num, type, foundAddrList):#I don't know what "type" is yet
+        """Format and info from the zip4 and address object into an output row"""
+        outRow = []
+        for address in foundAddrList:
+            score = 0
+            if address.geocodeResult.score != "":
+                score = address.geocodeResult.score
+            
+            xCoord = 0
+            if address.geocodeResult.xCoord != "":
+                xCoord = address.geocodeResult.xCoord
+                
+            yCoord = 0
+            if address.geocodeResult.yCoord != "":
+                yCoord = address.geocodeResult.yCoord
+            
+            vertexValues = [zip4Num, 
+                    type, 
+                    address.isFound, 
+                    int(address.originRowId), 
+                    address.houseNumber + " " + address.streetName, 
+                    address.zone, 
+                    address.geocodeResult.matchAddress,
+                    address.geocodeResult.zone,
+                    address.geocodeResult.geoCoder,
+                    score,
+                    xCoord,
+                    yCoord]
+            outRow.extend(vertexValues)
+        
+        if len(outRow) != 36:
+            fillerRow = ["", "", "", 0, "", "", "", "", "", 0, 0, 0]
+            outRow.extend(fillerRow)
+            
+        return outRow
+    
     def _createOuputFeatures(self):
         """Creates output features.
            Output features are created at the begining of the tool run incase they cause a database lock error."""
@@ -142,7 +178,7 @@ class ZipPlusFourTool(object):
         outFields.addFieldsToFeature(addrProblemTable)
         outFields.addFieldsToFeature(noMatchTable)
         outFields.addFieldsToFeature(pointFeature)
-        outFields.addFieldsToFeature(lineFeature)    
+        outFields.addFieldsToLineFeature(lineFeature)    
     
     def _createResultsFromPlus4Areas(self, zipPlus4Areas):
         outFields = fields.Output()
@@ -193,11 +229,14 @@ class ZipPlusFourTool(object):
                 for addr in foundAddrList:
                     array.append(arcpy.Point(float(addr.geocodeResult.xCoord), float(addr.geocodeResult.yCoord)))
                 line = arcpy.Polyline(array)
+                insertRow = self._createOuputLineRow(plus4Area._segSectorNum, "T", foundAddrList)
+                insertRow.append(line)
+                lineList.append(insertRow)
                 #Temp loop to show which addresses make up a line
-                for addr in foundAddrList:
-                    insertRow = self._createOuputRow(plus4Area._segSectorNum, "T", addr)#foundAddrList[0])
-                    insertRow.append(line)
-                    lineList.append(insertRow)
+#                 for addr in foundAddrList:
+#                     insertRow = self._createOuputRow(plus4Area._segSectorNum, "T", addr)#foundAddrList[0])
+#                     insertRow.append(line)
+#                     lineList.append(insertRow)
                     
                 #print "lineFeature"
         
@@ -214,7 +253,7 @@ class ZipPlusFourTool(object):
             pointCursor.insertRow(p)                     
         del pointCursor
         
-        f = list(outFields.getFields())
+        f = list(outFields.getLineFields())
         f.append("SHAPE@")                
         lineCursor = arcpy.da.InsertCursor(lineFeature, f)
         for l in lineList:
@@ -257,18 +296,21 @@ class ZipPlusFourTool(object):
         highnum = ''.join(i for i in addressHighNum if i.isdigit())
         highnum = str(int(highnum)).strip()
     
-        houseNumList = [lownum]
+        houseNumList = [str(int(lownum) + 2)]# + 2 Moves low number two away from the corner
     
         numdiff = int(highnum) - int(lownum)
     
-        if numdiff > 0:
+        if numdiff > 0 and numdiff > 4:
+            houseNumList.append(str(int(highnum) - 2))# - 2 Moves high number two away from the corner
+        
+        elif numdiff > 0:
             houseNumList.append(highnum)
     
         if numdiff > 40:
             
             #TODO Why would neither of these be hit? Odd and even in range?
             #TODO Add some logic to hanld the 0 - 99 ranges
-            if numdiff % 4 == 0:
+            if numdiff % 4 == 0:#This one seems unnecessary
                 midnum = str(int(lownum) + (numdiff/2))
                 houseNumList.append(midnum)
             elif numdiff % 2 == 0:
@@ -303,6 +345,39 @@ class ZipPlusFourTool(object):
         
         return streetAddress
     
+    def _getPreDirFromStreetName(self, streetName):
+        preDir = ""
+        nameParts = streetName.split()
+        if len(nameParts) > 1:
+            preDir = nameParts[1]
+        
+        if preDir.lower() == "north":
+            preDir = "n"
+        elif preDir.lower() == "east":
+            preDir = "e"
+        elif preDir.lower() == "south":
+            preDir = "s"
+        elif preDir.lower() == "west":
+            preDir = "w"
+        
+        return preDir
+
+    def _arePreDirsEqual(self, addrStreetName, geocodeStreetName):
+        """Tests pre-directions in the address street name and the geocode result street name
+        - Returns 2 for a street name with no predir
+        -Returns 1 for mathcing predirs
+        -Returns 0 for predirs that do not match"""
+        addrPreDir = self._getPreDirFromStreetName(addrStreetName)
+        geocodePreDir = self._getPreDirFromStreetName(geocodeStreetName)
+        
+        if addrPreDir.lower() == geocodePreDir.lower():
+            return 1
+        elif len(addrPreDir) > 1:
+            return 2
+        else:
+            return 0
+        
+    
     def _getGeodcodedAddresses(self, apiKey, inputTable):
         inputTable = inputTable
         idField = Address.csvField_Id
@@ -312,11 +387,14 @@ class ZipPlusFourTool(object):
         spatialRef = "NAD 1983 UTM Zone 12N"
         outputDir = self._tempDirectory
         addrResultTable =  "ResultsFromGeocode_" + self._uniqueRunNum  + ".csv"
-        
-        
+            
         #Direct path import 
-        #TODO Change this for production.
-        GeocodeAddressTable = imp.load_source('TableGeocoder', r'C:\Users\kwalker\Documents\GitHub\GeocoderTools\TableGeocoder\GeocodeAddressTable.py')
+#         GeocodeAddressTable = imp.load_source('TableGeocoder', r'C:\Users\kwalker\Documents\GitHub\GeocoderTools\TableGeocoder\GeocodeAddressTable.py')
+#         Tool = GeocodeAddressTable.TableGeocoder(apiKey, inputTable, idField, addressField, zoneField, locator, spatialRef, outputDir, addrResultTable)
+#         Tool.start()
+
+        #Find a way to do version checking if tool is being run in development.
+        import GeocodeAddressTable
         Tool = GeocodeAddressTable.TableGeocoder(apiKey, inputTable, idField, addressField, zoneField, locator, spatialRef, outputDir, addrResultTable)
         Tool.start()
 
@@ -336,6 +414,9 @@ class ZipPlusFourTool(object):
         whereClause = "RecordTypeCode = 'S' or RecordTypeCode = 'H' and not( AddrPrimaryHighNo is null or StreetName is null)"
         with arcpy.da.SearchCursor(self._zipTable, fieldList, whereClause) as cursor:
             for row in cursor:
+                if not row[inFields.getI(inFields.lowHouseNum)].isnumeric() or not row[inFields.getI(inFields.highHouseNum)].isnumeric():
+                    continue#Skip a malformed record.
+                
                 streetName = self._buildStreetName(row[inFields.getI(inFields.preDirection)], row[inFields.getI(inFields.streetName)],
                                                    row[inFields.getI(inFields.streetSuffix)], row[inFields.getI(inFields.postDirection)]) #row[2], row[3], row[4], row[5])
                 
@@ -393,6 +474,10 @@ class ZipPlusFourTool(object):
             if addr.id in geocodeResults: 
                 if "Error:" in geocodeResults[addr.id].matchAddress:
                     addr.setGeocodeResult(geocodeResults[addr.id], False)
+                elif float(geocodeResults[addr.id].score) < 85:
+                    addr.setGeocodeResult(geocodeResults[addr.id], False)
+                elif  not self._arePreDirsEqual("{} {}".format(addr.houseNumber, addr.streetName), geocodeResults[addr.id].matchAddress):
+                    addr.setGeocodeResult(geocodeResults[addr.id], False)        
                 else:
                     addr.setGeocodeResult(geocodeResults[addr.id], True)
                     

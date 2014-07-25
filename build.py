@@ -22,7 +22,7 @@ shutil.copy(os.path.join(os.path.dirname(__file__), toolBox), os.path.join(dstDi
 installer = "Install.py"
 shutil.copy(os.path.join(os.path.dirname(__file__), installer), os.path.join(dstDir, installer))
 
-scriptFiles = ["configs.py", "fields.py", "ZipPlusFourTool.py"]
+scriptFiles = ["configs.py", "fields.py", "ZipPlusFourTool.py", "GeocodeAddressTable.py"]
 for f in scriptFiles:
     shutil.copy(os.path.join(srcDir, f), os.path.join(dstDir, f))
 
