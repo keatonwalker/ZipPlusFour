@@ -3,7 +3,7 @@ Created on Mar 21, 2014
 
 @author: kwalker
 '''
-import arcpy, os, csv, imp, fields, configs, ScriptRunTime
+import arcpy, os, csv, imp, fields, configs, re, ScriptRunTime
 from time import strftime
 from operator import attrgetter
 
@@ -178,8 +178,38 @@ class ZipPlusFourTool(object):
         outFields.addFieldsToFeature(addrProblemTable)
         outFields.addFieldsToFeature(noMatchTable)
         outFields.addFieldsToFeature(pointFeature)
-        outFields.addFieldsToLineFeature(lineFeature)    
-    
+        outFields.addFieldsToLineFeature(lineFeature)
+        
+    def _checkPlusFourMismatchedZones(self, zipPlus4Areas):
+        
+        for plus4Area in zipPlus4Areas:
+            print plus4Area._segSectorNum
+            zonesAndAddresses = {}
+            for addr in plus4Area.getAddresses():
+                if addr.geocodeResult.zone not in zonesAndAddresses:
+                    zonesAndAddresses[addr.geocodeResult.zone] = [addr]
+                else:
+                    zonesAndAddresses[addr.geocodeResult.zone].append(addr)
+            
+            if len(zonesAndAddresses) > 2:
+                #More than 2 zones is too wierd, so set all the addresses to not found.
+                for zone in zonesAndAddresses:
+                    for addr in zonesAndAddresses[zone]:
+                        addr.isFound = False
+            elif len(zonesAndAddresses) == 2:
+                #choose the zone with the min number of addresses and set those addresses to not found
+                minZone = ""
+                minZoneLen = 0
+                
+                for zone in zonesAndAddresses:
+                    if not(minZoneLen) or len(zonesAndAddresses[zone]) <= minZoneLen:
+                        minZone = zone
+                
+                for addr in zonesAndAddresses[minZone]:
+                    addr.isFound = False                                  
+                
+                
+                       
     def _createResultsFromPlus4Areas(self, zipPlus4Areas):
         outFields = fields.Output()
         outConfig = configs.Output()
@@ -361,21 +391,53 @@ class ZipPlusFourTool(object):
             preDir = "w"
         
         return preDir
+    
+    def _getSufDirFromStreetName(self, streetName):
+        sufDir = ""
+        nameParts = streetName.split()
+        if len(nameParts) > 1:
+            sufDir = nameParts[len(nameParts) - 1]
+        
+        if sufDir.lower() == "north":
+            sufDir = "n"
+        elif sufDir.lower() == "east":
+            sufDir = "e"
+        elif sufDir.lower() == "south":
+            sufDir = "s"
+        elif sufDir.lower() == "west":
+            sufDir = "w"
+        
+        return sufDir
 
-    def _arePreDirsEqual(self, addrStreetName, geocodeStreetName):
+    def _areDirsEqual(self, addrStreetName, geocodeStreetName):
         """Tests pre-directions in the address street name and the geocode result street name
         - Returns 2 for a street name with no predir
-        -Returns 1 for mathcing predirs
+        -Returns 1 for matching predirs
         -Returns 0 for predirs that do not match"""
         addrPreDir = self._getPreDirFromStreetName(addrStreetName)
         geocodePreDir = self._getPreDirFromStreetName(geocodeStreetName)
         
-        if addrPreDir.lower() == geocodePreDir.lower():
+        addrSufDir = self._getSufDirFromStreetName(addrStreetName)
+        geocodeSufDir = self._getSufDirFromStreetName(geocodeStreetName)
+        
+        if addrPreDir.lower() == geocodePreDir.lower() and addrSufDir.lower() == geocodeSufDir.lower():
             return 1
-        elif len(addrPreDir) > 1:
+        elif len(addrPreDir) > 1 or len(addrSufDir) > 1:
             return 2
         else:
             return 0
+        
+    def _areNumericsEqual(self, addrStreetName, geocodeStreetName):
+        """Checks if names are equal once all non-numeric characters have been removed.
+        - Returns 0 if numercis do not match
+        - Returns 1 if they do."""
+        addrNumerics = re.sub(r"\D", "", addrStreetName)
+        geocodeNumerics = re.sub(r"\D", "", geocodeStreetName)
+        
+        if addrNumerics != geocodeNumerics:
+            return 0
+        else:
+            return 1
         
     
     def _getGeodcodedAddresses(self, apiKey, inputTable):
@@ -476,11 +538,14 @@ class ZipPlusFourTool(object):
                     addr.setGeocodeResult(geocodeResults[addr.id], False)
                 elif float(geocodeResults[addr.id].score) < 85:
                     addr.setGeocodeResult(geocodeResults[addr.id], False)
-                elif  not self._arePreDirsEqual("{} {}".format(addr.houseNumber, addr.streetName), geocodeResults[addr.id].matchAddress):
+                elif  not self._areDirsEqual("{} {}".format(addr.houseNumber, addr.streetName), geocodeResults[addr.id].matchAddress):
+                    addr.setGeocodeResult(geocodeResults[addr.id], False) 
+                elif  not self._areNumericsEqual("{} {}".format(addr.houseNumber, addr.streetName), geocodeResults[addr.id].matchAddress):
                     addr.setGeocodeResult(geocodeResults[addr.id], False)        
                 else:
                     addr.setGeocodeResult(geocodeResults[addr.id], True)
                     
+        self._checkPlusFourMismatchedZones(allZipPlusFours)
         arcpy.AddMessage("Creating result tables")
         timer = ScriptRunTime.ScriptRunTime()
         self._createResultsFromPlus4Areas(allZipPlusFours)

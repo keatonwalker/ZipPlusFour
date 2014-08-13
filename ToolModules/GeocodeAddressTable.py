@@ -249,8 +249,7 @@ class TableGeocoder(object):
                     self._HandleCurrentResult(currentResult, resultList, outputFullPath)
                         
     
-    def start(self):
-        print "$$$$$$$$$$$$$$$$$$$$$$$ Hello $$$$$$$$$$$$$$$$$$$$$$"     
+    def start(self):    
         resultList = []
         outputFullPath = os.path.join(self._outputDir, self._outputFileName)
         
